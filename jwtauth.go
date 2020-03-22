@@ -1,10 +1,10 @@
 package jwtauth
 
 import (
-	"context"
 	"errors"
 	"fmt"
-	"net/http"
+	"github.com/fate-lovely/phi"
+	"github.com/valyala/fasthttp"
 	"strings"
 	"time"
 
@@ -12,9 +12,9 @@ import (
 )
 
 // Context keys
-var (
-	TokenCtxKey = &contextKey{"Token"}
-	ErrorCtxKey = &contextKey{"Error"}
+const (
+	TokenCtxKey = "Token"
+	ErrorCtxKey = "Error"
 )
 
 // Library errors
@@ -67,25 +67,24 @@ func NewWithParser(alg string, parser *jwt.Parser, signKey interface{}, verifyKe
 // be the generic `jwtauth.Authenticator` middleware or your own custom handler
 // which checks the request context jwt token and error to prepare a custom
 // http response.
-func Verifier(ja *JWTAuth) func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
+func Verifier(ja *JWTAuth) phi.Middleware {
+	return func(next phi.HandlerFunc) phi.HandlerFunc {
 		return Verify(ja, TokenFromQuery, TokenFromHeader, TokenFromCookie)(next)
 	}
 }
 
-func Verify(ja *JWTAuth, findTokenFns ...func(r *http.Request) string) func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		hfn := func(w http.ResponseWriter, r *http.Request) {
-			ctx := r.Context()
-			token, err := VerifyRequest(ja, r, findTokenFns...)
-			ctx = NewContext(ctx, token, err)
-			next.ServeHTTP(w, r.WithContext(ctx))
-		}
-		return http.HandlerFunc(hfn)
+func Verify(ja *JWTAuth, findTokenFns ...func(r *fasthttp.RequestCtx) string) func(phi.Handler) phi.HandlerFunc {
+	return func(next phi.Handler) phi.HandlerFunc {
+		return phi.HandlerFunc(func(ctx *fasthttp.RequestCtx) {
+			token, err := VerifyRequest(ja, ctx, findTokenFns...)
+			ctx.SetUserValue(TokenCtxKey, token)
+			ctx.SetUserValue(ErrorCtxKey, err)
+			next.ServeFastHTTP(ctx)
+		})
 	}
 }
 
-func VerifyRequest(ja *JWTAuth, r *http.Request, findTokenFns ...func(r *http.Request) string) (*jwt.Token, error) {
+func VerifyRequest(ja *JWTAuth, r *fasthttp.RequestCtx, findTokenFns ...func(r *fasthttp.RequestCtx) string) (*jwt.Token, error) {
 	var tokenStr string
 	var err error
 
@@ -159,32 +158,26 @@ func (ja *JWTAuth) keyFunc(t *jwt.Token) (interface{}, error) {
 // Verifier middleware request context values. The Authenticator sends a 401 Unauthorized
 // response for any unverified tokens and passes the good ones through. It's just fine
 // until you decide to write something similar and customize your client response.
-func Authenticator(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		token, _, err := FromContext(r.Context())
+func Authenticator(next phi.HandlerFunc) phi.HandlerFunc {
+	return func(ctx *fasthttp.RequestCtx) {
+		token, _, err := FromContext(ctx)
 
 		if err != nil {
-			http.Error(w, http.StatusText(401), 401)
+			ctx.SetStatusCode(401)
 			return
 		}
 
 		if token == nil || !token.Valid {
-			http.Error(w, http.StatusText(401), 401)
+			ctx.SetStatusCode(401)
 			return
 		}
 
 		// Token is authenticated, pass it through
-		next.ServeHTTP(w, r)
-	})
+		next.ServeFastHTTP(ctx)
+	}
 }
 
-func NewContext(ctx context.Context, t *jwt.Token, err error) context.Context {
-	ctx = context.WithValue(ctx, TokenCtxKey, t)
-	ctx = context.WithValue(ctx, ErrorCtxKey, err)
-	return ctx
-}
-
-func FromContext(ctx context.Context) (*jwt.Token, jwt.MapClaims, error) {
+func FromContext(ctx *fasthttp.RequestCtx) (*jwt.Token, jwt.MapClaims, error) {
 	token, _ := ctx.Value(TokenCtxKey).(*jwt.Token)
 
 	var claims jwt.MapClaims
@@ -240,19 +233,15 @@ func SetExpiryIn(claims jwt.MapClaims, tm time.Duration) {
 
 // TokenFromCookie tries to retreive the token string from a cookie named
 // "jwt".
-func TokenFromCookie(r *http.Request) string {
-	cookie, err := r.Cookie("jwt")
-	if err != nil {
-		return ""
-	}
-	return cookie.Value
+func TokenFromCookie(r *fasthttp.RequestCtx) string {
+	return string(r.Request.Header.Cookie("jwt"))
 }
 
 // TokenFromHeader tries to retreive the token string from the
 // "Authorization" reqeust header: "Authorization: BEARER T".
-func TokenFromHeader(r *http.Request) string {
+func TokenFromHeader(r *fasthttp.RequestCtx) string {
 	// Get token from authorization header.
-	bearer := r.Header.Get("Authorization")
+	bearer := string(r.Request.Header.Peek("Authorization"))
 	if len(bearer) > 7 && strings.ToUpper(bearer[0:6]) == "BEARER" {
 		return bearer[7:]
 	}
@@ -261,9 +250,9 @@ func TokenFromHeader(r *http.Request) string {
 
 // TokenFromQuery tries to retreive the token string from the "jwt" URI
 // query parameter.
-func TokenFromQuery(r *http.Request) string {
+func TokenFromQuery(r *fasthttp.RequestCtx) string {
 	// Get token from query param named "jwt".
-	return r.URL.Query().Get("jwt")
+	return string(r.Request.URI().QueryArgs().Peek("jwt"))
 }
 
 // contextKey is a value for use with context.WithValue. It's used as

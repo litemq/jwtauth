@@ -60,11 +60,10 @@ package main
 
 import (
 	"fmt"
-	"net/http"
-
 	jwt "github.com/dgrijalva/jwt-go"
-	"github.com/go-chi/chi"
-	"github.com/go-chi/jwtauth"
+	"github.com/fate-lovely/phi"
+	"github.com/litemq/jwtauth"
+	"github.com/valyala/fasthttp"
 )
 
 var tokenAuth *jwtauth.JWTAuth
@@ -81,14 +80,14 @@ func init() {
 func main() {
 	addr := ":3333"
 	fmt.Printf("Starting server on %v\n", addr)
-	http.ListenAndServe(addr, router())
+	fasthttp.ListenAndServe(addr, router())
 }
 
-func router() http.Handler {
-	r := chi.NewRouter()
+func router() fasthttp.RequestHandler {
+	r := phi.NewRouter()
 
 	// Protected routes
-	r.Group(func(r chi.Router) {
+	r.Group(func(r phi.Router) {
 		// Seek, verify and validate JWT tokens
 		r.Use(jwtauth.Verifier(tokenAuth))
 
@@ -98,18 +97,18 @@ func router() http.Handler {
 		// and tweak it, its not scary.
 		r.Use(jwtauth.Authenticator)
 
-		r.Get("/admin", func(w http.ResponseWriter, r *http.Request) {
-			_, claims, _ := jwtauth.FromContext(r.Context())
-			w.Write([]byte(fmt.Sprintf("protected area. hi %v", claims["user_id"])))
+		r.Get("/admin", func(ctx *fasthttp.RequestCtx) {
+			_, claims, _ := jwtauth.FromContext(ctx)
+			ctx.Write([]byte(fmt.Sprintf("protected area. hi %v", claims["user_id"])))
 		})
 	})
 
 	// Public routes
-	r.Group(func(r chi.Router) {
-		r.Get("/", func(w http.ResponseWriter, r *http.Request) {
-			w.Write([]byte("welcome anonymous"))
+	r.Group(func(r phi.Router) {
+		r.Get("/", func(ctx *fasthttp.RequestCtx) {
+			ctx.Write([]byte("welcome anonymous"))
 		})
 	})
 
-	return r
+	return r.ServeFastHTTP
 }

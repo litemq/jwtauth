@@ -2,6 +2,8 @@
 
 [![GoDoc Widget]][godoc]
 
+Port of [go-chi/jwtauth](https://github.com/go-chi/jwtauth) middleware for [Phi router](https://github.com/cj1128/phi)
+
 The `jwtauth` http middleware package provides a simple way to verify a JWT token
 from a http request and send the result down the request context (`context.Context`).
 
@@ -45,17 +47,17 @@ from a request by using the `Verify` middleware instantiator directly. The defau
 
 # Usage
 
-See the full [example](https://github.com/go-chi/jwtauth/blob/master/_example/main.go).
+See the full [example](https://github.com/litemq/jwtauth/blob/master/_example/main.go).
 
 ```go
 package main
 
 import (
 	"fmt"
-	"net/http"
-
-	"github.com/go-chi/chi"
-	"github.com/go-chi/jwtauth"
+	jwt "github.com/dgrijalva/jwt-go"
+	"github.com/fate-lovely/phi"
+	"github.com/litemq/jwtauth"
+	"github.com/valyala/fasthttp"
 )
 
 var tokenAuth *jwtauth.JWTAuth
@@ -72,14 +74,14 @@ func init() {
 func main() {
 	addr := ":3333"
 	fmt.Printf("Starting server on %v\n", addr)
-	http.ListenAndServe(addr, router())
+	fasthttp.ListenAndServe(addr, router())
 }
 
-func router() http.Handler {
-	r := chi.NewRouter()
+func router() fasthttp.RequestHandler {
+	r := phi.NewRouter()
 
 	// Protected routes
-	r.Group(func(r chi.Router) {
+	r.Group(func(r phi.Router) {
 		// Seek, verify and validate JWT tokens
 		r.Use(jwtauth.Verifier(tokenAuth))
 
@@ -89,20 +91,20 @@ func router() http.Handler {
 		// and tweak it, its not scary.
 		r.Use(jwtauth.Authenticator)
 
-		r.Get("/admin", func(w http.ResponseWriter, r *http.Request) {
-			_, claims, _ := jwtauth.FromContext(r.Context())
-			w.Write([]byte(fmt.Sprintf("protected area. hi %v", claims["user_id"])))
+		r.Get("/admin", func(ctx *fasthttp.RequestCtx) {
+			_, claims, _ := jwtauth.FromContext(ctx)
+			ctx.Write([]byte(fmt.Sprintf("protected area. hi %v", claims["user_id"])))
 		})
 	})
 
 	// Public routes
-	r.Group(func(r chi.Router) {
-		r.Get("/", func(w http.ResponseWriter, r *http.Request) {
-			w.Write([]byte("welcome anonymous"))
+	r.Group(func(r phi.Router) {
+		r.Get("/", func(ctx *fasthttp.RequestCtx) {
+			ctx.Write([]byte("welcome anonymous"))
 		})
 	})
 
-	return r
+	return r.ServeFastHTTP
 }
 ```
 
@@ -110,5 +112,5 @@ func router() http.Handler {
 
 [MIT](/LICENSE)
 
-[godoc]: https://godoc.org/github.com/go-chi/jwtauth
-[godoc widget]: https://godoc.org/github.com/go-chi/jwtauth?status.svg
+[godoc]: https://godoc.org/github.com/litemq/jwtauth
+[godoc widget]: https://godoc.org/github.com/litemq/jwtauth?status.svg
